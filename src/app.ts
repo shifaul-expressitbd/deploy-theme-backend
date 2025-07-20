@@ -13,7 +13,11 @@ app.use(cors());
 app.use(helmet());
 
 app.get('/', (req, res) => {
-  res.json({ status: 'ok', message: 'Server is running', uptime: process.uptime() });
+  if (req.accepts('html')) {
+    res.send('<h1>Server is running</h1><p>Status: OK</p><p>Uptime: ' + process.uptime().toFixed(2) + ' seconds</p>');
+  } else {
+    res.json({ status: 'ok', message: 'Server is running', uptime: process.uptime() });
+  }
 });
 
 app.use(express.json());

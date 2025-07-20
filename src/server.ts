@@ -1,7 +1,7 @@
 import app from './app';
 import logger from './utils/logger';
 
-const HOST = process.env.HOST || '0.0.0.0';
+const HOST = '0.0.0.0';
 const PORT = process.env.PORT || '4444';
 
 const server = app.listen(Number(PORT), HOST, () => {
