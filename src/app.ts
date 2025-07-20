@@ -9,7 +9,14 @@ import type { Request, Response, NextFunction } from 'express';
 
 const app = express();
 
-app.use(cors());
+app.use(cors({
+  origin: [
+    'http://localhost:5173',
+    'https://calquick.app',
+    'https://frontend.calquick.app'
+  ],
+  credentials: true
+}));
 app.use(helmet());
 
 app.get('/', (req, res) => {
