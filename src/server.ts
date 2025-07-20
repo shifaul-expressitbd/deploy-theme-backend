@@ -8,6 +8,7 @@ const server = app.listen(Number(PORT), HOST, () => {
   logger.info(`Server running on http://${HOST}:${PORT}`);
 });
 
+
 const shutdown = () => {
   logger.info('Received shutdown signal, closing server...');
   server.close(() => {
@@ -15,5 +16,6 @@ const shutdown = () => {
     process.exit(0);
   });
 };
+
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown); 
