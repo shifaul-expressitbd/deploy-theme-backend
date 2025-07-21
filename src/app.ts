@@ -13,6 +13,8 @@ app.use(
   cors({
     origin: [
       "http://localhost:5173",
+      "http://localhost:4444",
+      "http://localhost:3000",
       "https://calquick.app",
       "https://frontend.calquick.app",
     ],
