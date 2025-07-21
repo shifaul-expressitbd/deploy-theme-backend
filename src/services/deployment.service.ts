@@ -57,13 +57,39 @@ export async function deployThemeToBusiness(theme: Theme, business: Business): P
     ];
     await new Promise<void>((resolve, reject) => {
       const proc = spawn('bash', [scriptPath, ...args]);
-      proc.stdout.on('data', (data) => logs.push(data.toString()));
-      proc.stderr.on('data', (data) => logs.push(data.toString()));
+      proc.stdout.on('data', (data) => {
+        const msg = data.toString();
+        logs.push(msg);
+        // Emit to Socket.io room for real-time logs
+        const jobId = `${theme.themeId}-${business.businessId}`;
+        try { require('../server').io.to(jobId).emit('deploy-log', { message: msg }); } catch {}
+        console.log(`[DEPLOY][${jobId}]`, msg.trim()); // Log to backend console with progress prefix
+      });
+      proc.stderr.on('data', (data) => {
+        const msg = data.toString();
+        logs.push(msg);
+        const jobId = `${theme.themeId}-${business.businessId}`;
+        try { require('../server').io.to(jobId).emit('deploy-log', { message: msg }); } catch {}
+        console.log(`[DEPLOY][${jobId}]`, msg.trim());
+      });
+      proc.on('error', (err) => {
+        const jobId = `${theme.themeId}-${business.businessId}`;
+        const errorMsg = `[DEPLOY][${jobId}] Failed to start deploy_theme.sh: ${err.message}`;
+        logs.push(errorMsg);
+        try { require('../server').io.to(jobId).emit('deploy-log', { message: errorMsg }); } catch {}
+        console.error(errorMsg);
+        reject(err);
+      });
       proc.on('close', (code) => {
         if (code === 0) {
           resolve();
         } else {
-          reject(new Error(`deploy_theme.sh exited with code ${code}`));
+          const jobId = `${theme.themeId}-${business.businessId}`;
+          const errorMsg = `[DEPLOY][${jobId}] deploy_theme.sh exited with code ${code}`;
+          logs.push(errorMsg);
+          try { require('../server').io.to(jobId).emit('deploy-log', { message: errorMsg }); } catch {}
+          console.error(errorMsg);
+          reject(new Error(errorMsg));
         }
       });
     });
@@ -79,13 +105,37 @@ export async function deployThemeToBusiness(theme: Theme, business: Business): P
       const rollbackArgs = [theme.themeId, business.businessId, business.domain];
       await new Promise<void>((resolve, reject) => {
         const proc = spawn('bash', [rollbackScript, ...rollbackArgs]);
-        proc.stdout.on('data', (data) => logs.push('[rollback] ' + data.toString()));
-        proc.stderr.on('data', (data) => logs.push('[rollback] ' + data.toString()));
+        proc.stdout.on('data', (data) => {
+          const msg = '[rollback] ' + data.toString();
+          logs.push(msg);
+          const jobId = `${theme.themeId}-${business.businessId}`;
+          try { require('../server').io.to(jobId).emit('deploy-log', { message: msg }); } catch {}
+          console.log(`[ROLLBACK][${jobId}]`, msg.trim());
+        });
+        proc.stderr.on('data', (data) => {
+          const msg = '[rollback] ' + data.toString();
+          logs.push(msg);
+          const jobId = `${theme.themeId}-${business.businessId}`;
+          try { require('../server').io.to(jobId).emit('deploy-log', { message: msg }); } catch {}
+          console.log(`[ROLLBACK][${jobId}]`, msg.trim());
+        });
+        proc.on('error', (err) => {
+          const jobId = `${theme.themeId}-${business.businessId}`;
+          const errorMsg = `[ROLLBACK][${jobId}] Failed to start rollback_deploy.sh: ${err.message}`;
+          logs.push(errorMsg);
+          try { require('../server').io.to(jobId).emit('deploy-log', { message: errorMsg }); } catch {}
+          console.error(errorMsg);
+          reject(err);
+        });
         proc.on('close', (code) => {
           if (code === 0) {
             resolve();
           } else {
-            logs.push(`[rollback] rollback_deploy.sh exited with code ${code}`);
+            const jobId = `${theme.themeId}-${business.businessId}`;
+            const errorMsg = `[ROLLBACK][${jobId}] rollback_deploy.sh exited with code ${code}`;
+            logs.push(errorMsg);
+            try { require('../server').io.to(jobId).emit('deploy-log', { message: errorMsg }); } catch {}
+            console.error(errorMsg);
             resolve(); // Don't reject, just log
           }
         });

@@ -34,6 +34,13 @@ export const io = new SocketIOServer(server, {
   },
 });
 
+// Allow clients to join a room for deployment logs
+io.on('connection', (socket) => {
+  socket.on('join', (room) => {
+    socket.join(room);
+  });
+});
+
 const shutdown = () => {
   logger.info('Received shutdown signal, closing server...');
   server.close(() => {

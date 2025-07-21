@@ -1,0 +1,13 @@
+{
+  "themeId": "ecom-001",
+  "businessId": "68525e87dcc86fc6f7f5c195",
+  "status": "failed",
+  "logs": [
+    "Calling deploy_theme.sh script...",
+    "/bin/bash: D:PROJECTSExpressProjectsdeploy-theme-backendscriptsdeploy_theme.sh: No such file or directory\n",
+    "Deployment failed: Error: deploy_theme.sh exited with code 127",
+    "Calling rollback_deploy.sh script...",
+    "[rollback] /bin/bash: D:PROJECTSExpressProjectsdeploy-theme-backendscriptsrollback_deploy.sh: No such file or directory\n",
+    "[rollback] rollback_deploy.sh exited with code 127"
+  ]
+}
