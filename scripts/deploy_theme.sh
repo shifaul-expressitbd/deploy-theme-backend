@@ -73,9 +73,11 @@ log "Running npm run build in $DEPLOY_DIR"
 npm run build || error_exit "npm run build failed"
 log "npm run build completed."
 
-# 5. Start with PM2
+# 5. Start with PM2 - FIXED VERSION
 log "Starting app with PM2 as $PM2_NAME"
-$PM2_PATH start npm --name "$PM2_NAME" -- start || error_exit "PM2 start failed"
+# Use full nvm node path to avoid PATH issues
+NODE_PATH="/root/.nvm/versions/node/v22.15.0/bin/node"
+$PM2_PATH start $NODE_PATH $DEPLOY_DIR/node_modules/.bin/next --name "$PM2_NAME" -- start || error_exit "PM2 start failed"
 log "PM2 start completed."
 
 # 6. Setup NGINX config
