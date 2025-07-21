@@ -1,4 +1,5 @@
 #!/bin/bash
+export PATH="/root/.nvm/versions/node/v22.15.0/bin:$PATH"
 set -euo pipefail
 
 # Arguments
