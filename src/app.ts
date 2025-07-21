@@ -31,6 +31,14 @@ app.get("/", (req, res) => {
 
 app.use(express.json());
 
+app.use("/api-docs", (req, res, next) => {
+  res.setHeader(
+    "Content-Security-Policy",
+    "script-src 'self' 'unsafe-eval'; object-src 'self'"
+  );
+  next();
+});
+
 app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
 routes.forEach((route) => app.use("/api/v1", route));
