@@ -3,4 +3,10 @@ export interface Business {
   userId: string;
   gtmId: string;
   domain: string;
+  ssh?: {
+    host: string;
+    port?: number;
+    username: string;
+    privateKeyPath: string;
+  };
 } 

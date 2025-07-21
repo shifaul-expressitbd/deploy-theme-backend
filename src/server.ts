@@ -1,6 +1,7 @@
 import app from './app';
 import logger from './utils/logger';
 import os from 'os';
+import { Server as SocketIOServer } from 'socket.io';
 
 const HOST = '0.0.0.0';
 const PORT = process.env.PORT || '4444';
@@ -24,6 +25,13 @@ const server = app.listen(Number(PORT), HOST, () => {
     logger.info(`Accessible at: http://localhost:${PORT}`);
     addresses.forEach(ip => logger.info(`Also accessible at: http://${ip}:${PORT}`));
   }
+});
+
+export const io = new SocketIOServer(server, {
+  cors: {
+    origin: '*',
+    methods: ['GET', 'POST'],
+  },
 });
 
 const shutdown = () => {
