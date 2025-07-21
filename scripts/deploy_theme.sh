@@ -29,11 +29,13 @@ error_exit() {
 
 # Check pm2 availability
 log "Checking pm2 availability..."
-if ! command -v pm2 >/dev/null 2>&1; then
-  error_exit "pm2 is not installed or not in PATH."
+PM2_PATH="/root/.nvm/versions/node/v22.15.0/bin/pm2"
+if [ ! -x "$PM2_PATH" ]; then
+  echo "ERROR: pm2 is not installed at $PM2_PATH"
+  exit 1
 fi
-log "pm2 path: $(command -v pm2)"
-pm2 --version || error_exit "pm2 is not working."
+log "pm2 path: $PM2_PATH"
+$PM2_PATH --version || error_exit "pm2 is not working."
 
 log "Starting deployment for $THEME_ID to $DOMAIN"
 
@@ -72,7 +74,7 @@ log "npm run build completed."
 
 # 5. Start with PM2
 log "Starting app with PM2 as $PM2_NAME"
-/root/.nvm/versions/node/v22.15.0/bin/pm2 start npm --name "$PM2_NAME" -- start || error_exit "PM2 start failed"
+$PM2_PATH start npm --name "$PM2_NAME" -- start || error_exit "PM2 start failed"
 log "PM2 start completed."
 
 # 6. Setup NGINX config
