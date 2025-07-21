@@ -45,8 +45,10 @@ export async function deployThemeToBusiness(theme: Theme, business: Business): P
   }
 
   try {
+    console.log('Calling deploy_theme.sh script...');
     logs.push('Calling deploy_theme.sh script...');
-    const scriptPath = path.resolve(__dirname, '../../scripts/deploy_theme.sh');
+    // Use absolute paths for Ubuntu VPS
+    const scriptPath = '/root/deploy-theme-backend/scripts/deploy_theme.sh';
     const args = [
       theme.themeId,
       theme.repoUrl,
@@ -101,7 +103,7 @@ export async function deployThemeToBusiness(theme: Theme, business: Business): P
     // Call rollback script
     try {
       logs.push('Calling rollback_deploy.sh script...');
-      const rollbackScript = path.resolve(__dirname, '../../scripts/rollback_deploy.sh');
+      const rollbackScript = '/root/deploy-theme-backend/scripts/rollback_deploy.sh';
       const rollbackArgs = [theme.themeId, business.businessId, business.domain];
       await new Promise<void>((resolve, reject) => {
         const proc = spawn('bash', [rollbackScript, ...rollbackArgs]);
