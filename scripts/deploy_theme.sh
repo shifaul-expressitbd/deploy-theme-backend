@@ -28,6 +28,7 @@ error_exit() {
 }
 
 # Check pm2 availability
+log "Checking pm2 availability..."
 if ! command -v pm2 >/dev/null 2>&1; then
   error_exit "pm2 is not installed or not in PATH."
 fi
@@ -37,14 +38,18 @@ pm2 --version || error_exit "pm2 is not working."
 log "Starting deployment for $THEME_ID to $DOMAIN"
 
 # 1. Clone repo (idempotent)
+log "Checking if $DEPLOY_DIR exists..."
 if [ -d "$DEPLOY_DIR" ]; then
   log "Removing existing deploy dir $DEPLOY_DIR"
   rm -rf "$DEPLOY_DIR" || error_exit "Failed to remove $DEPLOY_DIR"
 fi
-log "Cloning repo $REPO_URL to $DEPLOY_DIR"
+log "About to clone repo: $REPO_URL to $DEPLOY_DIR"
+git --version
 git clone "$REPO_URL" "$DEPLOY_DIR" || error_exit "Git clone failed"
+log "Git clone completed."
 
 # 2. Create .env.local
+log "Creating .env.local at $ENV_FILE"
 cat > "$ENV_FILE" <<EOF
 NEXT_PUBLIC_BUSINESS_ID=$BUSINESS_ID
 NEXT_PUBLIC_USER_ID=$USER_ID
@@ -55,18 +60,23 @@ log "Created .env.local at $ENV_FILE"
 
 # 3. Install dependencies
 cd "$DEPLOY_DIR"
-log "Running npm install"
+log "Running npm install in $DEPLOY_DIR"
+npm --version
 npm install || error_exit "npm install failed"
+log "npm install completed."
 
 # 4. Build project
-log "Running npm run build"
+log "Running npm run build in $DEPLOY_DIR"
 npm run build || error_exit "npm run build failed"
+log "npm run build completed."
 
 # 5. Start with PM2
 log "Starting app with PM2 as $PM2_NAME"
-pm2 start npm --name "$PM2_NAME" -- start || error_exit "PM2 start failed"
+/root/.nvm/versions/node/v22.15.0/bin/pm2 start npm --name "$PM2_NAME" -- start || error_exit "PM2 start failed"
+log "PM2 start completed."
 
 # 6. Setup NGINX config
+log "Creating NGINX config at $NGINX_CONF_PATH"
 cat > "$NGINX_CONF_PATH" <<EOF
 server {
   listen 80;
@@ -82,6 +92,7 @@ server {
 EOF
 ln -sf "$NGINX_CONF_PATH" "$NGINX_SYMLINK_PATH"
 log "NGINX config created and symlinked"
+log "Reloading NGINX"
 nginx -s reload || error_exit "NGINX reload failed"
 
 log "Deployment completed successfully for $THEME_ID to $DOMAIN" 
