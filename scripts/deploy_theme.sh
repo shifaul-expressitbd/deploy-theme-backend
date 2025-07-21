@@ -27,6 +27,13 @@ error_exit() {
   exit 1
 }
 
+# Check pm2 availability
+if ! command -v pm2 >/dev/null 2>&1; then
+  error_exit "pm2 is not installed or not in PATH."
+fi
+log "pm2 path: $(command -v pm2)"
+pm2 --version || error_exit "pm2 is not working."
+
 log "Starting deployment for $THEME_ID to $DOMAIN"
 
 # 1. Clone repo (idempotent)
