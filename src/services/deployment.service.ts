@@ -33,15 +33,21 @@ export async function deployThemeToBusiness(theme: Theme, business: Business): P
   }
 
   // Write in_progress status
-  const inProgress: Deployment = { 
-    themeId: theme.themeId, 
-    businessId: business.businessId, 
-    status: 'in_progress', 
-    logs: ['Deployment started'] 
-  };
+  const inProgress: Deployment = { themeId: theme.themeId, businessId: business.businessId, status: 'in_progress', logs: ['Deployment started'] };
   await fs.promises.writeFile(deploymentFile, JSON.stringify(inProgress, null, 2));
 
+  // Only support local for now
+  if (business.ssh) {
+    logs.push('Remote SSH deployment via bash script not yet implemented.');
+    const result: Deployment = { themeId: theme.themeId, businessId: business.businessId, status: 'failed', logs };
+    await fs.promises.writeFile(deploymentFile, JSON.stringify(result, null, 2));
+    return result;
+  }
+
   try {
+    console.log('Calling deploy_theme.sh script...');
+    logs.push('Calling deploy_theme.sh script...');
+    // Use absolute paths for Ubuntu VPS
     const scriptPath = '/root/deploy-theme-backend/scripts/deploy_theme.sh';
     const args = [
       theme.themeId,
@@ -51,72 +57,96 @@ export async function deployThemeToBusiness(theme: Theme, business: Business): P
       business.gtmId,
       business.domain,
     ];
-
-    // Custom environment with correct PATH
-    const env = {
-      ...process.env,
-      PATH: `/root/.nvm/versions/node/v22.15.0/bin:${process.env.PATH}`
-    };
-
     await new Promise<void>((resolve, reject) => {
-      const proc = spawn('bash', [scriptPath, ...args], {
-        env: env,
-        stdio: ['pipe', 'pipe', 'pipe']
-      });
-
+      const proc = spawn('bash', [scriptPath, ...args]);
       proc.stdout.on('data', (data) => {
         const msg = data.toString();
         logs.push(msg);
+        // Emit to Socket.io room for real-time logs
         const jobId = `${theme.themeId}-${business.businessId}`;
-        console.log(`[DEPLOY][${jobId}]`, msg.trim());
+        try { require('../server').io.to(jobId).emit('deploy-log', { message: msg }); } catch {}
+        console.log(`[DEPLOY][${jobId}]`, msg.trim()); // Log to backend console with progress prefix
       });
-
       proc.stderr.on('data', (data) => {
         const msg = data.toString();
         logs.push(msg);
         const jobId = `${theme.themeId}-${business.businessId}`;
-        console.error(`[DEPLOY][${jobId}]`, msg.trim());
+        try { require('../server').io.to(jobId).emit('deploy-log', { message: msg }); } catch {}
+        console.log(`[DEPLOY][${jobId}]`, msg.trim());
       });
-
       proc.on('error', (err) => {
         const jobId = `${theme.themeId}-${business.businessId}`;
-        const errorMsg = `Failed to start deployment: ${err.message}`;
+        const errorMsg = `[DEPLOY][${jobId}] Failed to start deploy_theme.sh: ${err.message}`;
         logs.push(errorMsg);
-        console.error(`[DEPLOY][${jobId}]`, errorMsg);
+        try { require('../server').io.to(jobId).emit('deploy-log', { message: errorMsg }); } catch {}
+        console.error(errorMsg);
         reject(err);
       });
-
       proc.on('close', (code) => {
         if (code === 0) {
           resolve();
         } else {
           const jobId = `${theme.themeId}-${business.businessId}`;
-          const errorMsg = `Deployment script exited with code ${code}`;
+          const errorMsg = `[DEPLOY][${jobId}] deploy_theme.sh exited with code ${code}`;
           logs.push(errorMsg);
-          console.error(`[DEPLOY][${jobId}]`, errorMsg);
+          try { require('../server').io.to(jobId).emit('deploy-log', { message: errorMsg }); } catch {}
+          console.error(errorMsg);
           reject(new Error(errorMsg));
         }
       });
     });
-
-    const result: Deployment = { 
-      themeId: theme.themeId, 
-      businessId: business.businessId, 
-      status: 'success', 
-      logs 
-    };
+    const result: Deployment = { themeId: theme.themeId, businessId: business.businessId, status: 'success', logs };
     await fs.promises.writeFile(deploymentFile, JSON.stringify(result, null, 2));
     return result;
   } catch (error: any) {
-    logs.push(`Deployment failed: ${error.message}`);
-    
-    const result: Deployment = { 
-      themeId: theme.themeId, 
-      businessId: business.businessId, 
-      status: 'failed', 
-      logs 
-    };
+    logs.push('Deployment failed: ' + error.toString());
+    // Call rollback script
+    try {
+      logs.push('Calling rollback_deploy.sh script...');
+      const rollbackScript = '/root/deploy-theme-backend/scripts/rollback_deploy.sh';
+      const rollbackArgs = [theme.themeId, business.businessId, business.domain];
+      await new Promise<void>((resolve, reject) => {
+        const proc = spawn('bash', [rollbackScript, ...rollbackArgs]);
+        proc.stdout.on('data', (data) => {
+          const msg = '[rollback] ' + data.toString();
+          logs.push(msg);
+          const jobId = `${theme.themeId}-${business.businessId}`;
+          try { require('../server').io.to(jobId).emit('deploy-log', { message: msg }); } catch {}
+          console.log(`[ROLLBACK][${jobId}]`, msg.trim());
+        });
+        proc.stderr.on('data', (data) => {
+          const msg = '[rollback] ' + data.toString();
+          logs.push(msg);
+          const jobId = `${theme.themeId}-${business.businessId}`;
+          try { require('../server').io.to(jobId).emit('deploy-log', { message: msg }); } catch {}
+          console.log(`[ROLLBACK][${jobId}]`, msg.trim());
+        });
+        proc.on('error', (err) => {
+          const jobId = `${theme.themeId}-${business.businessId}`;
+          const errorMsg = `[ROLLBACK][${jobId}] Failed to start rollback_deploy.sh: ${err.message}`;
+          logs.push(errorMsg);
+          try { require('../server').io.to(jobId).emit('deploy-log', { message: errorMsg }); } catch {}
+          console.error(errorMsg);
+          reject(err);
+        });
+        proc.on('close', (code) => {
+          if (code === 0) {
+            resolve();
+          } else {
+            const jobId = `${theme.themeId}-${business.businessId}`;
+            const errorMsg = `[ROLLBACK][${jobId}] rollback_deploy.sh exited with code ${code}`;
+            logs.push(errorMsg);
+            try { require('../server').io.to(jobId).emit('deploy-log', { message: errorMsg }); } catch {}
+            console.error(errorMsg);
+            resolve(); // Don't reject, just log
+          }
+        });
+      });
+    } catch (rollbackError) {
+      logs.push('Rollback script failed: ' + String(rollbackError));
+    }
+    const result: Deployment = { themeId: theme.themeId, businessId: business.businessId, status: 'failed', logs };
     await fs.promises.writeFile(deploymentFile, JSON.stringify(result, null, 2));
     return result;
   }
-}
+} 
