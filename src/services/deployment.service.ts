@@ -55,7 +55,9 @@ export async function deployThemeToBusiness(theme: Theme, business: Business): P
     const env = {
       ...process.env,
       DEBUG: debug ? "true" : "false",
-      PATH: process.env.PATH,
+      NODE_ENV: process.env.NODE_ENV || "development",
+      PATH: process.env.PATH || "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+      SHELL: "/bin/bash",
     };
 
     logger.info("Starting deployment process", {
@@ -69,28 +71,95 @@ export async function deployThemeToBusiness(theme: Theme, business: Business): P
     // Use absolute paths for Ubuntu VPS
     console.log(`[DEPLOY][${theme.themeId}-${business.businessId}] Starting deployment...`);
     logs.push("Starting deployment...");
-    const scriptPath = "/root/deploy-theme-backend/scripts/deploy_theme.sh";
+    // Use __dirname to get correct script path relative to current file
+    const scriptPath = path.resolve(__dirname, "../../scripts/deploy_theme.sh");
+
+    // Log script path and check if it exists
+    const scriptExists = await fs.promises
+      .access(scriptPath)
+      .then(() => true)
+      .catch(() => false);
+    logger.info(`Checking deploy script:`, {
+      scriptPath,
+      exists: scriptExists,
+      cwd: process.cwd(),
+      dirname: __dirname,
+    });
+
+    if (!scriptExists) {
+      throw new Error(`Deploy script not found at ${scriptPath}`);
+    }
+
+    // Make script executable
+    await fs.promises.chmod(scriptPath, "755");
+
     const args = [theme.themeId, theme.repoUrl, business.businessId, business.userId, business.gtmId, business.domain];
+
+    // Log command that will be executed
+    logger.info(`Executing deployment command:`, {
+      command: "bash",
+      script: scriptPath,
+      args,
+      env: {
+        DEBUG: env.DEBUG,
+        NODE_ENV: env.NODE_ENV,
+        PATH: env.PATH,
+      },
+    });
+
     await new Promise<void>((resolve, reject) => {
-      const proc = spawn("bash", [scriptPath, ...args]);
+      const proc = spawn("bash", [scriptPath, ...args], {
+        env,
+        cwd: path.dirname(scriptPath), // Run from scripts directory
+        stdio: ["ignore", "pipe", "pipe"],
+      });
       proc.stdout.on("data", (data) => {
         const msg = data.toString();
         logs.push(msg);
-        // Emit to Socket.io room for real-time logs
         const jobId = `${theme.themeId}-${business.businessId}`;
+
+        // Enhanced logging with timestamps and process info
+        logger.info(`[DEPLOY][${jobId}] Output`, {
+          type: "stdout",
+          message: msg.trim(),
+          timestamp: new Date().toISOString(),
+          pid: proc.pid,
+        });
+
+        // Emit to Socket.io room for real-time logs
         try {
-          require("../server").io.to(jobId).emit("deploy-log", { message: msg });
-        } catch {}
-        console.log(`[DEPLOY][${jobId}]`, msg.trim()); // Log to backend console with progress prefix
+          require("../server").io.to(jobId).emit("deploy-log", {
+            message: msg,
+            type: "stdout",
+            timestamp: new Date().toISOString(),
+          });
+        } catch (err) {
+          logger.error(`Failed to emit socket message`, { error: err });
+        }
       });
       proc.stderr.on("data", (data) => {
         const msg = data.toString();
         logs.push(msg);
         const jobId = `${theme.themeId}-${business.businessId}`;
+
+        // Enhanced error logging
+        logger.error(`[DEPLOY][${jobId}] Error output`, {
+          type: "stderr",
+          message: msg.trim(),
+          timestamp: new Date().toISOString(),
+          pid: proc.pid,
+        });
+
+        // Emit to Socket.io room for real-time logs
         try {
-          require("../server").io.to(jobId).emit("deploy-log", { message: msg });
-        } catch {}
-        console.log(`[DEPLOY][${jobId}]`, msg.trim());
+          require("../server").io.to(jobId).emit("deploy-log", {
+            message: msg,
+            type: "stderr",
+            timestamp: new Date().toISOString(),
+          });
+        } catch (err) {
+          logger.error(`Failed to emit socket message`, { error: err });
+        }
       });
       proc.on("error", (err) => {
         const jobId = `${theme.themeId}-${business.businessId}`;
