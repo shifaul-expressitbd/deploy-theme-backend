@@ -1,6 +1,18 @@
 #!/bin/bash
 set -euo pipefail
 
+# Enable debug mode if DEBUG env var is set
+if [ "${DEBUG:-}" = "true" ]; then
+    set -x
+fi
+
+# Arguments validation
+if [ "$#" -ne 6 ]; then
+    echo "Error: Invalid number of arguments"
+    echo "Usage: $0 THEME_ID REPO_URL BUSINESS_ID USER_ID GTM_ID DOMAIN"
+    exit 1
+fi
+
 # Arguments
 THEME_ID="$1"
 REPO_URL="$2"
@@ -8,6 +20,9 @@ BUSINESS_ID="$3"
 USER_ID="$4"
 GTM_ID="$5"
 DOMAIN="$6"
+
+# Script start timestamp
+START_TIME=$(date +%s)
 
 DEPLOY_BASE_PATH="/var/www"
 DEPLOY_DIR="$DEPLOY_BASE_PATH/${THEME_ID}-${BUSINESS_ID}"
@@ -19,7 +34,39 @@ NGINX_CONF_PATH="$NGINX_SITES_AVAILABLE/$DOMAIN"
 NGINX_SYMLINK_PATH="$NGINX_SITES_ENABLED/$DOMAIN"
 
 log() {
-  echo "[$(date +'%Y-%m-%dT%H:%M:%S%z')] $1"
+  local level="INFO"
+  if [ "$#" -eq 2 ]; then
+    level="$1"
+    shift
+  fi
+  local timestamp=$(date +'%Y-%m-%dT%H:%M:%S%z')
+  local message="$1"
+  echo "[$timestamp] [$level] [$$] $message"
+}
+
+log_debug() {
+  if [ "${DEBUG:-}" = "true" ]; then
+    log "DEBUG" "$1"
+  fi
+}
+
+log_error() {
+  log "ERROR" "$1"
+}
+
+log_info() {
+  log "INFO" "$1"
+}
+
+# Function to measure and log execution time
+time_command() {
+  local start_time=$(date +%s%N)
+  "$@"
+  local exit_code=$?
+  local end_time=$(date +%s%N)
+  local duration=$((($end_time - $start_time)/1000000))
+  log_debug "Command '$1' completed in ${duration}ms with exit code $exit_code"
+  return $exit_code
 }
 
 error_exit() {
@@ -38,15 +85,32 @@ pm2 --version || error_exit "pm2 is not working."
 log "Starting deployment for $THEME_ID to $DOMAIN"
 
 # 1. Clone repo (idempotent)
-log "Checking if $DEPLOY_DIR exists..."
+log_info "Starting repository clone phase"
+log_debug "Parameters:"
+log_debug "  DEPLOY_DIR: $DEPLOY_DIR"
+log_debug "  REPO_URL: $REPO_URL"
+
 if [ -d "$DEPLOY_DIR" ]; then
-  log "Removing existing deploy dir $DEPLOY_DIR"
-  rm -rf "$DEPLOY_DIR" || error_exit "Failed to remove $DEPLOY_DIR"
+  log_info "Removing existing deploy directory"
+  time_command rm -rf "$DEPLOY_DIR" || error_exit "Failed to remove $DEPLOY_DIR"
 fi
-log "About to clone repo: $REPO_URL to $DEPLOY_DIR"
-git --version
-git clone "$REPO_URL" "$DEPLOY_DIR" || error_exit "Git clone failed"
-log "Git clone completed."
+
+log_info "Cloning repository"
+log_debug "Git version: $(git --version)"
+log_debug "Git config: $(git config --list)"
+
+time_command git clone --progress "$REPO_URL" "$DEPLOY_DIR" 2>&1 | while read -r line; do
+  log_debug "git: $line"
+done || error_exit "Git clone failed"
+
+if [ ! -d "$DEPLOY_DIR/.git" ]; then
+  error_exit "Git clone completed but .git directory not found"
+fi
+
+log_info "Repository clone completed successfully"
+cd "$DEPLOY_DIR" || error_exit "Failed to change to deploy directory"
+log_debug "Current git status: $(git status --short)"
+log_debug "Current git branch: $(git branch --show-current)"
 
 # 2. Create .env.local
 log "Creating .env.local at $ENV_FILE"
@@ -59,16 +123,50 @@ EOF
 log "Created .env.local at $ENV_FILE"
 
 # 3. Install dependencies
-cd "$DEPLOY_DIR"
-log "Running npm install in $DEPLOY_DIR"
-npm --version
-npm install || error_exit "npm install failed"
-log "npm install completed."
+log_info "Starting dependency installation phase"
+log_debug "Node version: $(node --version)"
+log_debug "NPM version: $(npm --version)"
+
+# Check package.json exists
+if [ ! -f "package.json" ]; then
+  error_exit "package.json not found in $DEPLOY_DIR"
+fi
+log_debug "Package.json contents:"
+log_debug "$(cat package.json)"
+
+# Clear npm cache if DEBUG is true
+if [ "${DEBUG:-}" = "true" ]; then
+  log_debug "Clearing npm cache"
+  time_command npm cache clean --force
+fi
+
+# Install dependencies with detailed logging
+log_info "Installing npm dependencies"
+time_command npm install --verbose 2>&1 | while read -r line; do
+  log_debug "npm: $line"
+done || error_exit "npm install failed"
+
+log_info "Verifying node_modules"
+if [ ! -d "node_modules" ]; then
+  error_exit "node_modules directory not found after npm install"
+fi
 
 # 4. Build project
-log "Running npm run build in $DEPLOY_DIR"
-npm run build || error_exit "npm run build failed"
-log "npm run build completed."
+log_info "Starting build phase"
+log_debug "Checking available scripts:"
+log_debug "$(npm run | grep -A 999 'Scripts available')"
+
+log_info "Running build command"
+time_command npm run build 2>&1 | while read -r line; do
+  log_debug "build: $line"
+done || error_exit "npm run build failed"
+
+# Verify build output
+if [ ! -d "dist" ] && [ ! -d ".next" ]; then
+  error_exit "Build output directory not found"
+fi
+
+log_info "Build completed successfully"
 
 # 5. Start with PM2
 log "Starting app with PM2 as $PM2_NAME"
@@ -96,4 +194,29 @@ log "NGINX config created and symlinked"
 log "Reloading NGINX"
 nginx -s reload || error_exit "NGINX reload failed"
 
-log "Deployment completed successfully for $THEME_ID to $DOMAIN" 
+# Calculate total execution time
+END_TIME=$(date +%s)
+TOTAL_TIME=$((END_TIME - START_TIME))
+
+# Deployment summary
+log_info "=== Deployment Summary ==="
+log_info "Theme ID: $THEME_ID"
+log_info "Business ID: $BUSINESS_ID"
+log_info "Domain: $DOMAIN"
+log_info "Total execution time: ${TOTAL_TIME} seconds"
+log_info "PM2 process status:"
+pm2 show "$PM2_NAME" || log_error "Failed to get PM2 status"
+log_info "NGINX config check:"
+nginx -t || log_error "NGINX config check failed"
+log_info "Current system resources:"
+log_debug "Memory usage: $(free -h)"
+log_debug "Disk usage: $(df -h $DEPLOY_DIR)"
+log_info "=== End Summary ==="
+
+log_info "Deployment completed successfully for $THEME_ID to $DOMAIN"
+
+# Clean up temp files if DEBUG is not enabled
+if [ "${DEBUG:-}" != "true" ]; then
+    find "$DEPLOY_DIR" -type f -name "*.log" -delete
+    find "$DEPLOY_DIR" -type f -name "*.tmp" -delete
+fi 

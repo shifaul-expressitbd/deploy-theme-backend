@@ -1,9 +1,23 @@
 #!/bin/bash
 set -euo pipefail
 
+# Enable debug mode if DEBUG env var is set
+if [ "${DEBUG:-}" = "true" ]; then
+    set -x
+fi
+
+# Arguments validation
+if [ "$#" -ne 3 ]; then
+    echo "Error: Invalid number of arguments"
+    echo "Usage: $0 THEME_ID BUSINESS_ID DOMAIN"
+    exit 1
+fi
+
 THEME_ID="$1"
 BUSINESS_ID="$2"
 DOMAIN="$3"
+
+START_TIME=$(date +%s)
 
 DEPLOY_BASE_PATH="/var/www"
 DEPLOY_DIR="$DEPLOY_BASE_PATH/${THEME_ID}-${BUSINESS_ID}"
@@ -14,11 +28,49 @@ NGINX_CONF_PATH="$NGINX_SITES_AVAILABLE/$DOMAIN"
 NGINX_SYMLINK_PATH="$NGINX_SITES_ENABLED/$DOMAIN"
 
 log() {
-  echo "[$(date +'%Y-%m-%dT%H:%M:%S%z')] $1"
+  local level="INFO"
+  if [ "$#" -eq 2 ]; then
+    level="$1"
+    shift
+  fi
+  local timestamp=$(date +'%Y-%m-%dT%H:%M:%S%z')
+  local message="$1"
+  echo "[$timestamp] [$level] [$$] [ROLLBACK] $message"
+}
+
+log_debug() {
+  if [ "${DEBUG:-}" = "true" ]; then
+    log "DEBUG" "$1"
+  fi
+}
+
+log_error() {
+  log "ERROR" "$1"
+}
+
+log_info() {
+  log "INFO" "$1"
+}
+
+time_command() {
+  local start_time=$(date +%s%N)
+  "$@"
+  local exit_code=$?
+  local end_time=$(date +%s%N)
+  local duration=$((($end_time - $start_time)/1000000))
+  log_debug "Command '$1' completed in ${duration}ms with exit code $exit_code"
+  return $exit_code
 }
 
 error_exit() {
-  log "ERROR: $1"
+  log_error "$1"
+  log_debug "Stack trace:"
+  if [ "${DEBUG:-}" = "true" ]; then
+    local frame=0
+    while caller $frame; do
+      ((frame++))
+    done
+  fi
   exit 1
 }
 
