@@ -52,12 +52,11 @@ export async function deployThemeToBusiness(theme: Theme, business: Business): P
 
   try {
     const debug = process.env.NODE_ENV !== "production";
-    const env = {
+    const env: NodeJS.ProcessEnv = {
       ...process.env,
       DEBUG: debug ? "true" : "false",
       NODE_ENV: process.env.NODE_ENV || "development",
-      PATH: process.env.PATH || "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-      SHELL: "/bin/bash",
+      PATH: process.env.PATH,
     };
 
     logger.info("Starting deployment process", {
@@ -68,37 +67,26 @@ export async function deployThemeToBusiness(theme: Theme, business: Business): P
     });
 
     logs.push("Initializing deployment process...");
-    // Use absolute paths for Ubuntu VPS
-    console.log(`[DEPLOY][${theme.themeId}-${business.businessId}] Starting deployment...`);
-    logs.push("Starting deployment...");
-    // Use __dirname to get correct script path relative to current file
-    const scriptPath = path.resolve(__dirname, "../../scripts/deploy_theme.sh");
+    // Determine script path based on environment
+    const isProduction = process.env.NODE_ENV === "production";
+    const baseDir = isProduction ? "/root/deploy-theme-backend" : path.resolve(__dirname, "../..");
+    const scriptPath = path.join(baseDir, "scripts", "deploy_theme.sh");
 
-    // Log script path and check if it exists
-    const scriptExists = await fs.promises
-      .access(scriptPath)
-      .then(() => true)
-      .catch(() => false);
-    logger.info(`Checking deploy script:`, {
+    logger.info("Determined script path", {
       scriptPath,
-      exists: scriptExists,
-      cwd: process.cwd(),
-      dirname: __dirname,
+      isProduction,
+      baseDir,
     });
 
-    if (!scriptExists) {
-      throw new Error(`Deploy script not found at ${scriptPath}`);
-    }
-
-    // Make script executable
-    await fs.promises.chmod(scriptPath, "755");
-
+    logger.info(`[DEPLOY][${theme.themeId}-${business.businessId}] Starting deployment...`, {
+      scriptPath,
+      isProduction,
+      baseDir,
+    });
+    logs.push("Starting deployment...");
     const args = [theme.themeId, theme.repoUrl, business.businessId, business.userId, business.gtmId, business.domain];
-
-    // Log command that will be executed
-    logger.info(`Executing deployment command:`, {
-      command: "bash",
-      script: scriptPath,
+    logger.info("Executing deployment script", {
+      scriptPath,
       args,
       env: {
         DEBUG: env.DEBUG,
@@ -108,58 +96,54 @@ export async function deployThemeToBusiness(theme: Theme, business: Business): P
     });
 
     await new Promise<void>((resolve, reject) => {
+      // Check if bash exists
+      try {
+        const bashCheck = spawn("bash", ["--version"]);
+        bashCheck.on("error", (err) => {
+          logger.error("Bash is not available", { error: err.message });
+          reject(new Error("Bash is not available: " + err.message));
+        });
+      } catch (err) {
+        logger.error("Failed to check bash", { error: String(err) });
+        reject(new Error("Failed to check bash: " + String(err)));
+        return;
+      }
+
+      // Check if script exists
+      const fs = require("fs");
+      if (!fs.existsSync(scriptPath)) {
+        const error = `Deployment script not found at ${scriptPath}`;
+        logger.error(error);
+        reject(new Error(error));
+        return;
+      }
+
       const proc = spawn("bash", [scriptPath, ...args], {
-        env,
-        cwd: path.dirname(scriptPath), // Run from scripts directory
-        stdio: ["ignore", "pipe", "pipe"],
+        env: env,
+        stdio: ["pipe", "pipe", "pipe"],
       });
+
+      // Log process ID for debugging
+      logger.debug(`Spawned deployment script with PID ${proc.pid}`);
+
       proc.stdout.on("data", (data) => {
         const msg = data.toString();
         logs.push(msg);
-        const jobId = `${theme.themeId}-${business.businessId}`;
-
-        // Enhanced logging with timestamps and process info
-        logger.info(`[DEPLOY][${jobId}] Output`, {
-          type: "stdout",
-          message: msg.trim(),
-          timestamp: new Date().toISOString(),
-          pid: proc.pid,
-        });
-
         // Emit to Socket.io room for real-time logs
+        const jobId = `${theme.themeId}-${business.businessId}`;
         try {
-          require("../server").io.to(jobId).emit("deploy-log", {
-            message: msg,
-            type: "stdout",
-            timestamp: new Date().toISOString(),
-          });
-        } catch (err) {
-          logger.error(`Failed to emit socket message`, { error: err });
-        }
+          require("../server").io.to(jobId).emit("deploy-log", { message: msg });
+        } catch {}
+        console.log(`[DEPLOY][${jobId}]`, msg.trim()); // Log to backend console with progress prefix
       });
       proc.stderr.on("data", (data) => {
         const msg = data.toString();
         logs.push(msg);
         const jobId = `${theme.themeId}-${business.businessId}`;
-
-        // Enhanced error logging
-        logger.error(`[DEPLOY][${jobId}] Error output`, {
-          type: "stderr",
-          message: msg.trim(),
-          timestamp: new Date().toISOString(),
-          pid: proc.pid,
-        });
-
-        // Emit to Socket.io room for real-time logs
         try {
-          require("../server").io.to(jobId).emit("deploy-log", {
-            message: msg,
-            type: "stderr",
-            timestamp: new Date().toISOString(),
-          });
-        } catch (err) {
-          logger.error(`Failed to emit socket message`, { error: err });
-        }
+          require("../server").io.to(jobId).emit("deploy-log", { message: msg });
+        } catch {}
+        console.log(`[DEPLOY][${jobId}]`, msg.trim());
       });
       proc.on("error", (err) => {
         const jobId = `${theme.themeId}-${business.businessId}`;
@@ -190,14 +174,35 @@ export async function deployThemeToBusiness(theme: Theme, business: Business): P
     await fs.promises.writeFile(deploymentFile, JSON.stringify(result, null, 2));
     return result;
   } catch (error: any) {
-    logs.push("Deployment failed: " + error.toString());
+    const errorMsg = `Deployment failed: ${error.toString()}`;
+    logger.error(errorMsg, { error: error.toString() });
+    logs.push(errorMsg);
+
     // Call rollback script
     try {
       logs.push("Calling rollback_deploy.sh script...");
-      const rollbackScript = "/root/deploy-theme-backend/scripts/rollback_deploy.sh";
+      const isProduction = process.env.NODE_ENV === "production";
+      const baseDir = isProduction ? "/root/deploy-theme-backend" : path.resolve(__dirname, "../..");
+      const rollbackScript = path.join(baseDir, "scripts", "rollback_deploy.sh");
       const rollbackArgs = [theme.themeId, business.businessId, business.domain];
+
+      logger.info("Initiating rollback process", {
+        rollbackScript,
+        isProduction,
+        baseDir,
+      });
+
       await new Promise<void>((resolve, reject) => {
-        const proc = spawn("bash", [rollbackScript, ...rollbackArgs]);
+        const proc = spawn("bash", [rollbackScript, ...rollbackArgs], {
+          env: {
+            ...process.env,
+            DEBUG: process.env.NODE_ENV !== "production" ? "true" : "false",
+          },
+        });
+
+        // Log process ID for debugging
+        logger.debug(`Spawned rollback script with PID ${proc.pid}`);
+
         proc.stdout.on("data", (data) => {
           const msg = "[rollback] " + data.toString();
           logs.push(msg);
