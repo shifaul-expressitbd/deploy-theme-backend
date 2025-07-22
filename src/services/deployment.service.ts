@@ -67,6 +67,8 @@ export async function deployThemeToBusiness(theme: Theme, business: Business): P
 
     logs.push("Initializing deployment process...");
     // Use absolute paths for Ubuntu VPS
+    console.log(`[DEPLOY][${theme.themeId}-${business.businessId}] Starting deployment...`);
+    logs.push("Starting deployment...");
     const scriptPath = "/root/deploy-theme-backend/scripts/deploy_theme.sh";
     const args = [theme.themeId, theme.repoUrl, business.businessId, business.userId, business.gtmId, business.domain];
     await new Promise<void>((resolve, reject) => {
