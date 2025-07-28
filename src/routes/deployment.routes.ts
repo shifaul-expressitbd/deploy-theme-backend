@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { deployTheme } from '../controllers/deploymentController';
-import { getDeploymentJobStatus } from '../services/deploymentQueue';
+import { deploymentQueue, getDeploymentJobStatus } from '../services/deploymentQueue';
 
 const router = Router();
 
@@ -106,4 +106,73 @@ router.get('/deploy/status', async (req, res) => {
   res.json({ job: status });
 });
 
-export default router; 
+/**
+ * @swagger
+ * /deploy/queue:
+ *   get:
+ *     summary: Get BullMQ deployment queue status and jobs
+ *     responses:
+ *       200:
+ *         description: Queue status and jobs
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 queue:
+ *                   type: object
+ *                 jobs:
+ *                   type: object
+ *                   properties:
+ *                     waiting:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                     active:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                     completed:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                     failed:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                     delayed:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                     paused:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ */
+router.get('/deploy/queue', async (req, res) => {
+  try {
+    const queue = deploymentQueue;
+    const waiting = await queue.getJobs(['waiting']);
+    const active = await queue.getJobs(['active']);
+    const completed = await queue.getJobs(['completed'], 0, 10, false);
+    const failed = await queue.getJobs(['failed'], 0, 10, false);
+    const delayed = await queue.getJobs(['delayed']);
+    const paused = await queue.getJobs(['paused']);
+    const queueInfo = await queue.getJobCounts();
+    res.json({
+      queue: queueInfo,
+      jobs: {
+        waiting: waiting.map(j => ({ id: j.id, data: j.data, status: 'waiting' })),
+        active: active.map(j => ({ id: j.id, data: j.data, status: 'active' })),
+        completed: completed.map(j => ({ id: j.id, data: j.data, status: 'completed', returnvalue: j.returnvalue })),
+        failed: failed.map(j => ({ id: j.id, data: j.data, status: 'failed', failedReason: j.failedReason })),
+        delayed: delayed.map(j => ({ id: j.id, data: j.data, status: 'delayed' })),
+        paused: paused.map(j => ({ id: j.id, data: j.data, status: 'paused' })),
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch queue info', details: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+export default router;

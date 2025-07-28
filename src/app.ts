@@ -1,13 +1,12 @@
+import cors from "cors";
+import type { NextFunction, Request, Response } from "express";
 import express from "express";
-import routes from "./routes";
+import helmet from "helmet";
+import client from 'prom-client';
 import swaggerUi from "swagger-ui-express";
 import swaggerSpec from "./config/swagger";
-import cors from "cors";
-import helmet from "helmet";
+import routes from "./routes";
 import logger from "./utils/logger";
-import type { Request, Response, NextFunction } from "express";
-import { apiKeyAuth } from './middleware/apiKeyAuth';
-import client from 'prom-client';
 
 const app = express();
 
@@ -46,7 +45,7 @@ app.use("/api-docs", (req, res, next) => {
 app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
 // Apply API key auth to all /api/v1 routes
-app.use('/api/v1', apiKeyAuth);
+// ...existing code...
 
 routes.forEach((route) => app.use('/api/v1', route));
 
